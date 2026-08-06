@@ -1,30 +1,24 @@
 import streamlit as st
 from pathlib import Path
 
-
 st.logo("logo.jpeg", size="large")
 
-# SESSION:
+# Session state init
 if "faulty_reasons" not in st.session_state:
     st.session_state.faulty_reasons = {}
 if "selected_point" not in st.session_state:
     st.session_state.selected_point = None
 if "dialog_open" not in st.session_state:
     st.session_state.dialog_open = False
+if "descriptions" not in st.session_state:
+    st.session_state.descriptions = {}
+if "selected_day" not in st.session_state:
+    st.session_state.selected_day = None
 
-# PAGES:
-main_page = st.Page(
-    "pages/1_main.py",
-    title = "پارامتر های کنترل عملیات",
-    icon=":material/home:"
-)
-upload_page = st.Page(
-    "pages/4_upload.py",
-    title = "آپلود فایل",
-    #icon=":material/calendar:"
-)
+# Pages
+main_page = st.Page("pages/1_main.py", title="پارامتر های کنترل عملیات", icon=":material/home:")
+upload_page = st.Page("pages/4_upload.py", title="آپلود فایل")
 
-# Do not open the dashboard until both of its required inputs exist.
 data_dir = Path("data")
 has_data = any(data_dir.glob("[0-9]*/*/*.csv"))
 has_control_limits = (data_dir / "cl_data.csv").is_file()

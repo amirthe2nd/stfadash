@@ -44,15 +44,15 @@ def read_csv_with_fallback(path):
 
 def normalize_control_limits(raw_df):
     """
-    Normalise the control‑limit file: expects first three columns as [UCL, LCL, Equipment].
+    Normalise the control‑limit file: expects first three columns as [LCL, UCL, Equipment].
     Splits multiple equipment names in one cell (separated by whitespace).
     """
     limits = raw_df.iloc[:, :3].copy()
-    limits.columns = ['UCL', 'LCL', 'Equipment']   # note order: UCL, LCL
-    limits['UCL'] = pd.to_numeric(limits['UCL'], errors='coerce')
+    limits.columns = ['LCL', 'UCL', 'Equipment']   # <-- CORRECT order
     limits['LCL'] = pd.to_numeric(limits['LCL'], errors='coerce')
+    limits['UCL'] = pd.to_numeric(limits['UCL'], errors='coerce')
     limits['Equipment'] = limits['Equipment'].astype(str).str.strip()
-    limits = limits.dropna(subset=['UCL', 'LCL', 'Equipment'])
+    limits = limits.dropna(subset=['LCL', 'UCL', 'Equipment'])
     limits['Equipment'] = limits['Equipment'].str.split()
     return limits.explode('Equipment', ignore_index=True)
 
