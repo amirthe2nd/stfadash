@@ -1,0 +1,6 @@
+jalaali
+jdatetime
+plotly
+numpy
+pandas
+streamlit
