@@ -19,3 +19,7 @@ pip install streamlit jalaali jdatetime pathlib plotly numpy pandas
 streamlit run app.py
 ```
 استفاده کنید.
+
+## توضیحات راجع به ساختار جدید کد
+- تمام constant های این پروژه باید در فایل `config.py` نوشته شود.
+- 
