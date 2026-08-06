@@ -24,11 +24,6 @@ upload_page = st.Page(
     #icon=":material/calendar:"
 )
 
-monitoring_page = st.Page(
-    "pages/2_monitoring.py",
-    title = "مانیتورینگ",
-    #icon=":material/home:"
-)
 
 # Do not open the dashboard until both of its required inputs exist.
 data_dir = Path("data")
@@ -36,7 +31,7 @@ has_data = any(data_dir.glob("[0-9]*/*/*.csv"))
 has_control_limits = (data_dir / "cl_data.csv").is_file()
 
 if has_data and has_control_limits:
-    menu = st.navigation({"Menu": [main_page, upload_page, monitoring_page]})
+    menu = st.navigation({"Menu": [main_page, upload_page]})
 else:
     st.info("ابتدا فایل داده و فایل حدود کنترل را بارگذاری کنید.")
     menu = st.navigation({"Menu": [upload_page]})

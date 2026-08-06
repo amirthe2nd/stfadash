@@ -7,6 +7,72 @@ from pathlib import Path
 import jdatetime
 import os
 
+def _load_description_csv(path):
+    """Read a description CSV, tolerating Persian Windows encodings."""
+    for encoding in ('utf-8-sig', 'cp1256', 'windows-1252', 'latin1'):
+        try:
+            return pd.read_csv(path, encoding=encoding)
+        except (UnicodeDecodeError, FileNotFoundError):
+            continue
+    return pd.DataFrame()
+
+def _normalize_jalali_date(value):
+    """Normalize "1404/06/01" or "1405/1/1" -> "1404-06-01" / "1405-01-01"
+    so it matches the zero-padded Jalali "%Y-%m-%d" strings used elsewhere.
+    """
+    parts = str(value).strip().split('/')
+    if len(parts) != 3:
+        return str(value).strip()
+    try:
+        y, m, d = parts
+        return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+    except ValueError:
+        return str(value).strip()
+
+_description_frames = []
+for _path in ("data/description2.csv", "data/description.csv"):
+    _df = _load_description_csv(_path)
+    if not _df.empty:
+        _df.columns = _df.columns.str.strip()
+        _description_frames.append(_df)
+
+if _description_frames:
+    description_csv = pd.concat(_description_frames, ignore_index=True)
+    description_csv.iloc[:, 0] = description_csv.iloc[:, 0].apply(_normalize_jalali_date)
+else:
+    description_csv = pd.DataFrame()
+
+# Column layout of description2.csv (after stripping headers):
+#   0: date   1: علت توقف آسیاب 1   3: علت توقف آسیاب 2   5: علت توقف کوره
+DESCRIPTION_COLUMN_BY_PREFIX = {"B1": 1, "B2": 3}
+DEFAULT_DESCRIPTION_COLUMN = 5  # G tags, and any tag that isn't B1/B2, fall back to کوره
+
+def get_description_column(equipment_tag):
+    """Map an equipment/tag name to its stoppage-reason column.
+
+    - Tags starting with B1 -> آسیاب 1
+    - Tags starting with B2 -> آسیاب 2
+    - Everything else (G tags, or unrecognized tags) -> کوره
+    """
+    tag = str(equipment_tag).upper()
+    for prefix, col in DESCRIPTION_COLUMN_BY_PREFIX.items():
+        if tag.startswith(prefix):
+            return col
+    return DEFAULT_DESCRIPTION_COLUMN
+
+def get_auto_description(jalali_date_str, equipment_tag):
+    """Look up the stoppage description for a given Jalali day + equipment."""
+    if description_csv.empty:
+        return ""
+    match = description_csv[description_csv.iloc[:, 0] == str(jalali_date_str)]
+    if match.empty:
+        return ""
+    col = get_description_column(equipment_tag)
+    value = str(match.iloc[0, col]).strip()
+    if value in ("", "/", "nan"):
+        return ""
+    return value
+
 # ---------- Helper Functions ----------
 def calculate_difference(value, UCL, LCL):
     """Return the relative deviation if value is outside [LCL, UCL], else 0.
@@ -228,6 +294,7 @@ if month_dir.exists():
                 num_outliers = all_daily['Outlier'].sum()
                 st.info(f"تعداد نقاط خارج از محدوده: {num_outliers} از {len(all_daily)}")
                 
+                
                 # ---- 4. Split data ----
                 inside = all_daily[~all_daily['Outlier']]
                 outside = all_daily[all_daily['Outlier']]
@@ -320,27 +387,46 @@ if month_dir.exists():
 
                 if 'descriptions' not in st.session_state:
                     st.session_state.descriptions = {}
-                    for idx, row in outlier_daily.iterrows():
-                        date_str = row['Date']
-                        day_num = int(date_str.split('-')[2])
-                        day_file = Path(f'data/{year}/{month_num}/{day_num:02d}.csv')
-                        if day_file.exists():
-                            day_data = pd.read_csv(day_file)
-                            day_data.columns = day_data.columns.str.strip()
-                            if 'description' in day_data.columns:
-                                desc = day_data['description'].dropna().astype(str)
-                                desc = desc[desc.str.strip() != '']
-                                if not desc.empty:
-                                    st.session_state.descriptions[date_str] = desc.iloc[0]
+
+                def _description_cache_key(date_str, equipment):
+                    # Descriptions depend on which equipment/tag is selected
+                    # (آسیاب 1 vs آسیاب 2 vs کوره), so the cache key must
+                    # include the equipment, not just the date.
+                    return f"{equipment}::{date_str}"
+
+                for idx, row in outlier_daily.iterrows():
+                    date_str = row['Date']
+                    cache_key = _description_cache_key(date_str, selected_equipment)
+                    if cache_key in st.session_state.descriptions:
+                        continue
+
+                    manual_desc = ""
+                    day_num = int(date_str.split('-')[2])
+                    day_file = Path(f'data/{year}/{month_num}/{day_num:02d}.csv')
+                    if day_file.exists():
+                        day_data = pd.read_csv(day_file)
+                        day_data.columns = day_data.columns.str.strip()
+                        if 'description' in day_data.columns:
+                            desc = day_data['description'].dropna().astype(str)
+                            desc = desc[desc.str.strip() != '']
+                            if not desc.empty:
+                                manual_desc = desc.iloc[0]
+
+                    # Prefer a manually saved description; otherwise fall back
+                    # to the auto-matched reason from description2.csv.
+                    st.session_state.descriptions[cache_key] = (
+                        manual_desc or get_auto_description(date_str, selected_equipment)
+                    )
 
                 display_data = []
                 for idx, row in outlier_daily.iterrows():
                     date_str = row['Date']
+                    cache_key = _description_cache_key(date_str, selected_equipment)
                     display_data.append({
                         'Date': date_str,
                         selected_equipment: row['Daily_Mean'],
                         'Difference': row['Difference'],
-                        'Description': st.session_state.descriptions.get(date_str, '')
+                        'Description': st.session_state.descriptions.get(cache_key, '')
                     })
                 display_df = pd.DataFrame(display_data)
                 
@@ -365,7 +451,9 @@ if month_dir.exists():
                                 day_data['description'] = ''
                             day_data['description'] = description
                             day_data.to_csv(day_file, index=False)
-                            st.session_state.descriptions[date_str] = description
+                            st.session_state.descriptions[
+                                _description_cache_key(date_str, selected_equipment)
+                            ] = description
                     monthly_tab.success("✓ توضیحات ذخیره شدند")
 
                 # ========== DAILY TAB ==========
@@ -389,7 +477,17 @@ if month_dir.exists():
                     if selected_option is not None:
                         selected_row = all_daily.loc[selected_option]
                         selected_date = selected_row['Date']
-                        selected_description = st.session_state.descriptions.get(selected_date, '')
+
+                        # Auto description matched from description2.csv for
+                        # this date + equipment tag (آسیاب 1 / آسیاب 2 / کوره).
+                        selected_des = get_auto_description(selected_date, selected_equipment)
+
+                        description_cache_key = f"{selected_equipment}::{selected_date}"
+                        selected_description = st.session_state.descriptions.get(
+                            description_cache_key,
+                            selected_des
+                        )
+                        st.info(selected_description or "توضیحی برای این روز ثبت نشده است.")
 
                         day_num = int(selected_date.split('-')[2])
                         day_file = Path(f'data/{year}/{month_num}/{day_num:02d}.csv')
@@ -412,7 +510,7 @@ if month_dir.exists():
                                 description_input = daily_tab.text_input(
                                     "توضیحات را اینجا وارد کنید.",
                                     value=selected_description,
-                                    key=f"description_{year}_{month_num}_{day_num}"
+                                    key=f"description_{year}_{month_num}_{day_num}_{selected_equipment}"
                                 )
                             with col2:
                                 daily_tab.write(f"**UCL:** {UCL}")
@@ -447,12 +545,14 @@ if month_dir.exists():
                             showlegend=False
                         )
                         daily_tab.plotly_chart(fig_daily, use_container_width=True, key="daily_chart")
-                        if daily_tab.button("ذخیره توضیحات روز", key=f"save_description_{year}_{month_num}_{day_num}"):
+                        if daily_tab.button("ذخیره توضیحات روز", key=f"save_description_{year}_{month_num}_{day_num}_{selected_equipment}"):
                             if 'description' not in day_data.columns:
                                 day_data['description'] = ''
                             day_data['description'] = description_input
                             day_data.to_csv(day_file, index=False)
-                            st.session_state.descriptions[selected_date] = description_input
+                            st.session_state.descriptions[
+                                f"{selected_equipment}::{selected_date}"
+                            ] = description_input
                             daily_tab.success("توضیحات ذخیره شد")
                 else:
                     daily_tab.warning("داده‌ای برای این ماه وجود ندارد.")
@@ -514,3 +614,6 @@ if not df_yearly.empty:
     yearly_tab.dataframe(df_yearly[['ماه', 'میانگین ماهانه', 'انحراف']])
 else:
     yearly_tab.warning(f"داده‌ای برای سال {year} موجود نیست.")
+
+
+# -- description csv loading 
