@@ -2,6 +2,7 @@ import jdatetime
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
 from utils import (
     DATA_DIR,
     calculate_difference,
@@ -66,13 +67,6 @@ def display_month_tab(year, month, month_num, selected_equipment, cl_csv, month_
     )
     all_daily.columns = ["Date", "Daily_Mean"]
 
-    # Dynamic limits based on daily means
-    mean_y = all_daily["Daily_Mean"].mean()
-    std_y = all_daily["Daily_Mean"].std()
-
-    # UCL = mean_y + 3 * std_y
-    # LCL = mean_y - 3 * std_y
-
     # Outlier flags
     all_daily["Outlier"] = (all_daily["Daily_Mean"] > UCL) | (
         all_daily["Daily_Mean"] < LCL
@@ -96,9 +90,9 @@ def display_month_tab(year, month, month_num, selected_equipment, cl_csv, month_
         monthly_faulty = calculate_difference(monthly_sum, UCL, LCL)
         col1.text("میزان انحراف ماهانه:")
         if monthly_faulty == 0:
-            col1.success(f"{monthly_faulty:.4f}")  # green – no deviation
+            col1.success(f"{monthly_faulty:.4f}")
         else:
-            col1.error(f"{monthly_faulty:.4f}")  # red – deviation detected
+            col1.error(f"{monthly_faulty:.4f}")
 
         if monthly_faulty == 0:
             col2.text("نتیجه ی پایش ماهانه:")
