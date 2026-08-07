@@ -83,17 +83,17 @@ def display_month_tab(year, month, month_num, selected_equipment, cl_csv, month_
     all_daily["Day_Index"] = range(1, len(all_daily) + 1)
 
     # Monthly metrics
-    monthly_mean = all_daily["Daily_Mean"].mean()
-    monthly_faulty = calculate_difference(monthly_mean, UCL, LCL)
+    monthly_sum = all_daily["Daily_Mean"].sum()
+    monthly_faulty = calculate_difference(monthly_sum, UCL, LCL)
     col1, col2 = st.columns(2)
     # Monthly metrics
-    if pd.isna(monthly_mean):
+    if pd.isna(monthly_sum):
         col1.text("میزان انحراف ماهانه:")
         col1.error("بدون داده")
         col2.text("نتیجه ی پایش ماهانه:")
         col2.warning("داده کافی نیست")
     else:
-        monthly_faulty = calculate_difference(monthly_mean, UCL, LCL)
+        monthly_faulty = calculate_difference(monthly_sum, UCL, LCL)
         col1.text("میزان انحراف ماهانه:")
         if monthly_faulty == 0:
             col1.success(f"{monthly_faulty:.4f}")  # green – no deviation
