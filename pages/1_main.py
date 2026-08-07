@@ -1,18 +1,23 @@
+import glob
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
 from ui.month_tab import display_month_tab
+
 BASE_DIR = Path(__file__).parent
 from utils import (
     DATA_DIR,
     clean_measurements,
+    compute_equipment_faults,
     get_auto_description,
     get_day_description,
     get_monthly_fault,
     is_outlier,
+    load_yearly_data,
     normalize_control_limits,
     read_csv_with_fallback,
 )
@@ -225,112 +230,202 @@ with yearly_tab:
     col1.write("### پایش سالانه")
     col1.text(f"سال {year}")
 
-    monthly_results = []
-    for m_num in range(1, 13):
-        m_name = [name for name, num in month_mapping.items() if num == f"{m_num:02d}"]
-        m_name = m_name[0] if m_name else f"{m_num:02d}"
-        mean_val, fault, has_data = get_monthly_fault(
-            year, f"{m_num:02d}", selected_equipment, cl_csv
-        )
-        if has_data and mean_val is not None:
-            monthly_results.append(
-                {
-                    "ماه": m_name,
-                    "میانگین ماهانه": mean_val,
-                    "انحراف": fault if fault is not None else 0,
-                    "داده موجود": True,
-                }
+    # 1. Load all data for the year (ONCE)
+    yearly_df = load_yearly_data(year)
+
+    if yearly_df.empty:
+        yearly_tab.warning(f"داده‌ای برای سال {year} موجود نیست.")
+    else:
+        # 2. Overall equipment ranking
+        all_equip_faults = compute_equipment_faults(yearly_df)  # returns all equipment
+        if not all_equip_faults.empty:
+            # Sort descending (most faulty first)
+            equip_ranking = all_equip_faults.sort_values(
+                "AvgDeviation", ascending=False
+            )
+            equip_ranking.columns = ["تجهیز", "میانگین انحراف سالانه"]
+
+            avg_fault_overall = equip_ranking["میانگین انحراف سالانه"].mean()
+            col1.metric(
+                "میانگین انحراف سالانه (کل تجهیزات)",
+                f"{avg_fault_overall:.4f}" if pd.notna(avg_fault_overall) else "N/A",
+            )
+            col2.metric("تجهیز انتخاب شده", selected_equipment)
+
+            # Display ranking in an expander
+            with yearly_tab.expander("رتبه‌بندی تجهیزات بر اساس انحراف"):
+                yearly_tab.dataframe(equip_ranking)
+                if not equip_ranking.empty:
+                    fig_rank = px.bar(
+                        equip_ranking.head(10),
+                        x="تجهیز",
+                        y="میانگین انحراف سالانه",
+                        title="ده تجهیز با بیشترین انحراف سالانه",
+                    )
+                    yearly_tab.plotly_chart(fig_rank, use_container_width=True)
+        else:
+            yearly_tab.warning("هیچ داده‌ای برای محاسبه انحراف تجهیزات موجود نیست.")
+
+        # 3. Monthly deviation chart for the selected equipment
+        if selected_equipment:
+            if selected_equipment in yearly_df.columns:
+                # Compute monthly average value and deviation from yearly average
+                equip_series = yearly_df[selected_equipment]
+                monthly_avg = (
+                    yearly_df.groupby("month")[selected_equipment].mean().reset_index()
+                )
+                yearly_avg = equip_series.mean()
+                monthly_avg["deviation"] = abs(
+                    monthly_avg[selected_equipment] - yearly_avg
+                )
+
+                # Map month number to Persian month name
+                monthly_avg["month_name"] = monthly_avg["month"].apply(
+                    lambda m: (
+                        [
+                            name
+                            for name, num in month_mapping.items()
+                            if num == f"{m:02d}"
+                        ][0]
+                        if any
+                        else f"{m:02d}"
+                    )
+                )
+
+                # Plot monthly deviation
+                fig_yearly = px.bar(
+                    monthly_avg,
+                    x="month_name",
+                    y="deviation",
+                    title=f"انحراف ماهانه تجهیز {selected_equipment}",
+                    labels={"deviation": "میزان انحراف", "month_name": "ماه"},
+                    color="deviation",
+                    color_continuous_scale=["green", "yellow", "red"],
+                )
+                yearly_tab.plotly_chart(fig_yearly, use_container_width=True)
+
+                # Display monthly table
+                monthly_display = monthly_avg[
+                    ["month_name", selected_equipment, "deviation"]
+                ]
+                monthly_display.columns = ["ماه", "میانگین ماهانه", "انحراف"]
+                yearly_tab.dataframe(monthly_display)
+            else:
+                yearly_tab.warning(
+                    f"تجهیز {selected_equipment} در داده‌های سال {year} یافت نشد."
+                )
+
+        # 4. MOST FAULTY EQUIPMENT (since each column is one "signal")
+        if not all_equip_faults.empty:
+            worst = all_equip_faults.loc[all_equip_faults["AvgDeviation"].idxmax()]
+            worst_equip = worst["Equipment"]
+            worst_val = worst["AvgDeviation"]
+
+            yearly_tab.write("### بیشترین تجهیز پرنقص")
+            col1, col2 = yearly_tab.columns(2)
+            col1.metric("پرنقص‌ترین تجهیز", worst_equip)
+            col1.metric("میانگین انحراف", f"{worst_val:.4f}")
+
+            # Also show a bar chart of all equipment deviations
+            fig_sig = px.bar(
+                all_equip_faults.sort_values("AvgDeviation", ascending=False),
+                x="Equipment",
+                y="AvgDeviation",
+                title="میانگین انحراف سالانه تمام تجهیزات",
+                labels={"AvgDeviation": "میانگین انحراف", "Equipment": "تجهیز"},
+                color="AvgDeviation",
+                color_continuous_scale=["green", "yellow", "red"],
+            )
+            yearly_tab.plotly_chart(fig_sig, use_container_width=True)
+            yearly_tab.dataframe(
+                all_equip_faults.sort_values("AvgDeviation", ascending=False)
             )
         else:
-            monthly_results.append(
-                {
-                    "ماه": m_name,
-                    "میانگین ماهانه": None,
-                    "انحراف": None,
-                    "داده موجود": False,
-                }
-            )
-    df_yearly = pd.DataFrame(monthly_results)
-    df_yearly = df_yearly[df_yearly["داده موجود"]]
+            yearly_tab.warning("داده‌ای برای محاسبه انحراف تجهیزات موجود نیست.")
 
-    if not df_yearly.empty:
-        avg_fault = abs(df_yearly["انحراف"].mean())
-        col1.metric(
-            "میانگین انحراف سالانه",
-            f"{avg_fault:.4f}" if avg_fault is not None else "N/A",
-        )
-        col2.metric("تجهیز", selected_equipment)
-        df_yearly["abs_deviation"] = df_yearly["انحراف"].abs()
-        fig_yearly = px.bar(
-            df_yearly,
-            x="ماه",
-            y="انحراف",
-            title=f"انحراف ماهانه تجهیز {selected_equipment}",
-            labels={
-                "انحراف": "میزان انحراف",
-                "ماه": "ماه",
-                "abs_deviation": "انحراف مطلق",
-            },
-            color="abs_deviation",
-            color_continuous_scale=["green", "yellow", "red"],
-        )
-        yearly_tab.plotly_chart(fig_yearly, use_container_width=True)
-        yearly_tab.dataframe(df_yearly[["ماه", "میانگین ماهانه", "انحراف"]])
-    else:
-        yearly_tab.warning(f"داده‌ای برای سال {year} موجود نیست.")
-
-    # Ranking of ALL equipment
-    def compute_yearly_avg_fault(year, equipment, cl_csv, month_mapping):
-        monthly_results = []
-        for m_num in range(1, 13):
-            m_name = [
-                name for name, num in month_mapping.items() if num == f"{m_num:02d}"
-            ]
-            m_name = m_name[0] if m_name else f"{m_num:02d}"
-            mean_val, fault, has_data = get_monthly_fault(
-                year, f"{m_num:02d}", equipment, cl_csv
-            )
-            if has_data and mean_val is not None:
-                monthly_results.append(
-                    {
-                        "ماه": m_name,
-                        "میانگین ماهانه": mean_val,
-                        "انحراف": fault if fault is not None else 0,
-                        "داده موجود": True,
-                    }
+        # ========== NEW: MOST DEVIATION FROM CONTROL LIMITS ==========
+        yearly_tab.write("### بیشترین انحراف از حدود کنترل")
+        # Get UCL and LCL for selected equipment from cl_csv
+        ucl_row = cl_csv[cl_csv["Equipment"].str.strip() == selected_equipment]
+        if not ucl_row.empty:
+            UCL = ucl_row["UCL"].values[0]
+            LCL = ucl_row["LCL"].values[0]
+            # Check if selected equipment exists in yearly data
+            if selected_equipment in yearly_df.columns:
+                # Compute daily means
+                daily_means = (
+                    yearly_df.groupby("date")[selected_equipment].mean().reset_index()
                 )
+                daily_means.rename(
+                    columns={selected_equipment: "daily_mean"}, inplace=True
+                )
+
+                # Compute deviation: positive if outside limits, else 0
+                daily_means["deviation"] = daily_means["daily_mean"].apply(
+                    lambda x: max(0, x - UCL, LCL - x)
+                )
+
+                # Find the day with maximum deviation
+                max_dev_row = daily_means.loc[daily_means["deviation"].idxmax()]
+                worst_date = max_dev_row["date"]
+                worst_dev = max_dev_row["deviation"]
+                worst_mean = max_dev_row["daily_mean"]
+
+                # Display metrics
+                col1, col2 = yearly_tab.columns(2)
+                col1.metric("تاریخ پرانحراف‌ترین روز", worst_date)
+                col1.metric("میانگین روزانه", f"{worst_mean:.4f}")
+                col2.metric("انحراف از حدود", f"{worst_dev:.4f}")
+                col2.metric("وضعیت", "خارج از محدوده" if worst_dev > 0 else "در محدوده")
+
+                # Plot daily means with UCL/LCL and highlight the worst day
+                import plotly.graph_objects as go
+
+                fig_limits = go.Figure()
+                fig_limits.add_trace(
+                    go.Scatter(
+                        x=daily_means["date"],
+                        y=daily_means["daily_mean"],
+                        mode="lines+markers",
+                        name="میانگین روزانه",
+                        marker=dict(color="blue"),
+                    )
+                )
+                fig_limits.add_hline(
+                    y=UCL, line_dash="dash", line_color="red", annotation_text="UCL"
+                )
+                fig_limits.add_hline(
+                    y=LCL, line_dash="dash", line_color="red", annotation_text="LCL"
+                )
+                # Highlight the worst point
+                fig_limits.add_trace(
+                    go.Scatter(
+                        x=[worst_date],
+                        y=[worst_mean],
+                        mode="markers",
+                        marker=dict(color="red", size=14, symbol="star"),
+                        name="بیشترین انحراف",
+                    )
+                )
+                fig_limits.update_layout(
+                    title=f"میانگین روزانه {selected_equipment} با حدود کنترل",
+                    xaxis_title="تاریخ",
+                    yaxis_title="مقدار",
+                    hovermode="x unified",
+                    height=500,
+                )
+                yearly_tab.plotly_chart(fig_limits, use_container_width=True)
+
+                # Optionally show a table of all days with deviation
+                with yearly_tab.expander("نمایش جدول تمام روزها"):
+                    yearly_tab.dataframe(
+                        daily_means.sort_values("deviation", ascending=False)
+                    )
             else:
-                monthly_results.append(
-                    {
-                        "ماه": m_name,
-                        "میانگین ماهانه": None,
-                        "انحراف": None,
-                        "داده موجود": False,
-                    }
+                yearly_tab.warning(
+                    f"تجهیز {selected_equipment} در داده‌های سال {year} یافت نشد."
                 )
-        df_yearly = pd.DataFrame(monthly_results)
-        df_yearly = df_yearly[df_yearly["داده موجود"]]
-        if not df_yearly.empty:
-            return abs(df_yearly["انحراف"].mean())
-        return None
-
-    equipment_names = cl_csv["Equipment"].drop_duplicates().str.strip().tolist()
-    fault_dict = {}
-    for equip in equipment_names:
-        avg = compute_yearly_avg_fault(year, equip, cl_csv, month_mapping)
-        if avg is not None:
-            fault_dict[equip] = avg
-
-    df_ranking = pd.DataFrame(
-        list(fault_dict.items()), columns=["تجهیز", "میانگین انحراف سالانه"]
-    )
-    df_ranking = df_ranking.sort_values("میانگین انحراف سالانه", ascending=False)
-
-    if not df_ranking.empty:
-        most_faulty = df_ranking.iloc[0]
-        col1, col2 = yearly_tab.columns(2)
-        col2.metric("پرنقص‌ترین تجهیز", most_faulty["تجهیز"])
-        col2.metric("با میانگین انحراف", most_faulty["میانگین انحراف سالانه"])
-        col2.dataframe(df_ranking)
-    else:
-        col2.warning("هیچ داده‌ای برای هیچ تجهیزی موجود نیست.")
+        else:
+            yearly_tab.warning(
+                f"حدود کنترل برای تجهیز {selected_equipment} در فایل cl_data.csv یافت نشد."
+            )

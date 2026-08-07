@@ -1,9 +1,10 @@
+import glob
+import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import streamlit as st
-
 
 # ---------- Base path ----------
 BASE_DIR = Path(__file__).parent
@@ -14,6 +15,105 @@ DATA_DIR = BASE_DIR / "data"
 DESCRIPTION_FILES = ("description2.csv", "description.csv")
 DESCRIPTION_COLUMN_BY_PREFIX = {"B1": 1, "B2": 3}
 DEFAULT_DESCRIPTION_COLUMN = 5
+
+
+def load_yearly_data(year):
+    """
+    Load all day CSV files for a given year.
+    Assumes:
+      - Folder: data/{year}/{month:02d}/
+      - Each CSV: first column is a date (ignored), remaining columns are equipment names.
+      - Filename is day number (e.g., 01.csv)
+    Returns DataFrame with columns: date (YYYY-MM-DD), month (int), and equipment columns.
+    """
+    all_dfs = []
+    for month in range(1, 13):
+        month_str = f"{month:02d}"
+        path = f"data/{year}/{month_str}/*.csv"
+        for file in glob.glob(path):
+            day_num = int(os.path.basename(file).split(".")[0])
+            df = pd.read_csv(file)
+            # Drop the first column (assumed date) – we'll use our own date
+            if len(df.columns) > 0:
+                df.drop(df.columns[0], axis=1, inplace=True)
+            df["date"] = f"{year}-{month_str}-{day_num:02d}"
+            df["month"] = month
+            all_dfs.append(df)
+    if not all_dfs:
+        return pd.DataFrame()
+    return pd.concat(all_dfs, ignore_index=True)
+
+
+def compute_equipment_faults(yearly_df, equipment=None):
+    """
+    For each equipment column (all columns except the first 'date' and 'month'),
+    compute the average absolute deviation from the monthly median.
+
+    Parameters:
+        yearly_df : wide DataFrame (columns: date, month, Equipment1, Equipment2, ...)
+        equipment  : (optional) if provided, return fault for that single equipment
+
+    Returns:
+        DataFrame with columns: Equipment, AvgDeviation
+    """
+    if yearly_df.empty:
+        return pd.DataFrame()
+
+    # Identify equipment columns: all columns except 'date' and 'month'
+    # The first column is date – we can detect it as the only non-numeric? Or we can assume we drop it.
+    # Better: we drop columns that are definitely not equipment: 'date' and 'month'
+    cols_to_drop = ["month"]
+    # The date column might have any name, so we drop any column that is not numeric?
+    # We'll assume the first column is date; we'll drop it by position.
+    # Since we added 'month', we can safely drop the first column (position 0) if it's the date.
+    # But to be safe, we can identify columns that are not equipment by checking if they are not numeric.
+    # Actually, we can keep all columns except 'month' and the date column.
+    # We'll assume the date column is the first column in the original CSV.
+    # We'll drop it by checking if it's the only non-numeric column besides 'month'?
+    # Simpler: we'll drop any column that is of object type or is named 'date' or similar.
+    # Let's just drop columns that are not numeric (since equipment values should be numeric).
+    numeric_cols = yearly_df.select_dtypes(include=["number"]).columns.tolist()
+    # Exclude 'month' from numeric_cols if it's there (it is numeric)
+    equipment_cols = [col for col in numeric_cols if col != "month"]
+    if not equipment_cols:
+        return pd.DataFrame()
+
+    # Filter by equipment if specified
+    if equipment is not None:
+        if equipment not in equipment_cols:
+            return pd.DataFrame()
+        equipment_cols = [equipment]
+
+    # We'll melt the equipment columns into long format
+    df_melted = yearly_df.melt(
+        id_vars=["month"],
+        value_vars=equipment_cols,
+        var_name="Equipment",
+        value_name="Value",
+    )
+
+    # Compute monthly median per equipment
+    monthly_baseline = (
+        df_melted.groupby(["Equipment", "month"])["Value"]
+        .median()
+        .reset_index()
+        .rename(columns={"Value": "Baseline"})
+    )
+
+    # Merge baseline and compute absolute deviation
+    df_with_baseline = df_melted.merge(monthly_baseline, on=["Equipment", "month"])
+    df_with_baseline["Deviation"] = abs(
+        df_with_baseline["Value"] - df_with_baseline["Baseline"]
+    )
+
+    # Average deviation per equipment over the year
+    yearly_fault = (
+        df_with_baseline.groupby("Equipment")["Deviation"]
+        .mean()
+        .reset_index()
+        .rename(columns={"Deviation": "AvgDeviation"})
+    )
+    return yearly_fault
 
 
 def _load_description_csv(filename):
@@ -135,9 +235,7 @@ def is_outlier(value, UCL, LCL):
 
 
 def clean_measurements(values, UCL, LCL):
-    cleaned = pd.to_numeric(values, errors="coerce").replace(
-        [np.inf, -np.inf], np.nan
-    )
+    cleaned = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan)
     if not (LCL <= 0 <= UCL):
         cleaned = cleaned.mask(cleaned == 0)
     return cleaned
@@ -211,8 +309,6 @@ def get_monthly_fault(year, month_num, equipment, cl_df):
     LCL = float(eq_row.iloc[0]["LCL"])
     UCL = float(eq_row.iloc[0]["UCL"])
 
-    monthly_mean = clean_measurements(
-        month_csv[equipment], UCL, LCL
-    ).mean()
+    monthly_mean = clean_measurements(month_csv[equipment], UCL, LCL).mean()
     fault = calculate_difference(monthly_mean, UCL, LCL)
     return monthly_mean, fault, True
