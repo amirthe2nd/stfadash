@@ -9,6 +9,7 @@ import streamlit as st
 from ui.month_tab import display_month_tab
 
 BASE_DIR = Path(__file__).parent
+from config import month_mapping
 from utils import (
     DATA_DIR,
     clean_measurements,
@@ -225,6 +226,7 @@ with daily_tab:
         )
 
 # ========== YEARLY TAB ==========
+# ========== YEARLY TAB ==========
 with yearly_tab:
     col1, col2 = yearly_tab.columns(2)
     col1.write("### پایش سالانه")
@@ -237,9 +239,8 @@ with yearly_tab:
         yearly_tab.warning(f"داده‌ای برای سال {year} موجود نیست.")
     else:
         # 2. Overall equipment ranking
-        all_equip_faults = compute_equipment_faults(yearly_df)  # returns all equipment
+        all_equip_faults = compute_equipment_faults(yearly_df)
         if not all_equip_faults.empty:
-            # Sort descending (most faulty first)
             equip_ranking = all_equip_faults.sort_values(
                 "AvgDeviation", ascending=False
             )
@@ -252,7 +253,6 @@ with yearly_tab:
             )
             col2.metric("تجهیز انتخاب شده", selected_equipment)
 
-            # Display ranking in an expander
             with yearly_tab.expander("رتبه‌بندی تجهیزات بر اساس انحراف"):
                 yearly_tab.dataframe(equip_ranking)
                 if not equip_ranking.empty:
@@ -269,7 +269,6 @@ with yearly_tab:
         # 3. Monthly deviation chart for the selected equipment
         if selected_equipment:
             if selected_equipment in yearly_df.columns:
-                # Compute monthly average value and deviation from yearly average
                 equip_series = yearly_df[selected_equipment]
                 monthly_avg = (
                     yearly_df.groupby("month")[selected_equipment].mean().reset_index()
@@ -279,7 +278,8 @@ with yearly_tab:
                     monthly_avg[selected_equipment] - yearly_avg
                 )
 
-                # Map month number to Persian month name
+                # Map month number to Persian name using month_mapping
+                # month_mapping is imported from config.py
                 monthly_avg["month_name"] = monthly_avg["month"].apply(
                     lambda m: (
                         [
@@ -292,7 +292,6 @@ with yearly_tab:
                     )
                 )
 
-                # Plot monthly deviation
                 fig_yearly = px.bar(
                     monthly_avg,
                     x="month_name",
@@ -304,7 +303,6 @@ with yearly_tab:
                 )
                 yearly_tab.plotly_chart(fig_yearly, use_container_width=True)
 
-                # Display monthly table
                 monthly_display = monthly_avg[
                     ["month_name", selected_equipment, "deviation"]
                 ]
@@ -315,7 +313,7 @@ with yearly_tab:
                     f"تجهیز {selected_equipment} در داده‌های سال {year} یافت نشد."
                 )
 
-        # 4. MOST FAULTY EQUIPMENT (since each column is one "signal")
+        # 4. MOST FAULTY EQUIPMENT
         if not all_equip_faults.empty:
             worst = all_equip_faults.loc[all_equip_faults["AvgDeviation"].idxmax()]
             worst_equip = worst["Equipment"]
@@ -326,7 +324,6 @@ with yearly_tab:
             col1.metric("پرنقص‌ترین تجهیز", worst_equip)
             col1.metric("میانگین انحراف", f"{worst_val:.4f}")
 
-            # Also show a bar chart of all equipment deviations
             fig_sig = px.bar(
                 all_equip_faults.sort_values("AvgDeviation", ascending=False),
                 x="Equipment",
@@ -345,42 +342,55 @@ with yearly_tab:
 
         # ========== NEW: MOST DEVIATION FROM CONTROL LIMITS ==========
         yearly_tab.write("### بیشترین انحراف از حدود کنترل")
-        # Get UCL and LCL for selected equipment from cl_csv
         ucl_row = cl_csv[cl_csv["Equipment"].str.strip() == selected_equipment]
         if not ucl_row.empty:
             UCL = ucl_row["UCL"].values[0]
             LCL = ucl_row["LCL"].values[0]
-            # Check if selected equipment exists in yearly data
             if selected_equipment in yearly_df.columns:
-                # Compute daily means
+                # Compute daily means and sort by date (string sorting works: YYYY-MM-DD)
                 daily_means = (
                     yearly_df.groupby("date")[selected_equipment].mean().reset_index()
                 )
                 daily_means.rename(
                     columns={selected_equipment: "daily_mean"}, inplace=True
                 )
+                daily_means = daily_means.sort_values(
+                    "date"
+                )  # lexicographic sorting is fine
 
-                # Compute deviation: positive if outside limits, else 0
+                # Extract Persian month number from date string (positions 5-7)
+                daily_means["month_num"] = daily_means["date"].str[5:7].astype(int)
+
+                # Map month number to Persian month name using month_mapping
+                daily_means["persian_month"] = daily_means["month_num"].apply(
+                    lambda m: (
+                        [
+                            name
+                            for name, num in month_mapping.items()
+                            if num == f"{m:02d}"
+                        ][0]
+                        if any
+                        else f"{m:02d}"
+                    )
+                )
+
+                # Compute deviation from control limits
                 daily_means["deviation"] = daily_means["daily_mean"].apply(
                     lambda x: max(0, x - UCL, LCL - x)
                 )
 
-                # Find the day with maximum deviation
                 max_dev_row = daily_means.loc[daily_means["deviation"].idxmax()]
                 worst_date = max_dev_row["date"]
                 worst_dev = max_dev_row["deviation"]
                 worst_mean = max_dev_row["daily_mean"]
 
-                # Display metrics
                 col1, col2 = yearly_tab.columns(2)
                 col1.metric("تاریخ پرانحراف‌ترین روز", worst_date)
                 col1.metric("میانگین روزانه", f"{worst_mean:.4f}")
                 col2.metric("انحراف از حدود", f"{worst_dev:.4f}")
                 col2.metric("وضعیت", "خارج از محدوده" if worst_dev > 0 else "در محدوده")
 
-                # Plot daily means with UCL/LCL and highlight the worst day
-                import plotly.graph_objects as go
-
+                # ---- Plot daily means with UCL/LCL and highlight worst day ----
                 fig_limits = go.Figure()
                 fig_limits.add_trace(
                     go.Scatter(
@@ -397,7 +407,6 @@ with yearly_tab:
                 fig_limits.add_hline(
                     y=LCL, line_dash="dash", line_color="red", annotation_text="LCL"
                 )
-                # Highlight the worst point
                 fig_limits.add_trace(
                     go.Scatter(
                         x=[worst_date],
@@ -407,19 +416,38 @@ with yearly_tab:
                         name="بیشترین انحراف",
                     )
                 )
+
+                # ---- Set x‑axis ticks to Persian month names (first day of each month) ----
+                # Find indices where month changes
+                month_change = daily_means["month_num"].diff().fillna(0) != 0
+                tick_indices = daily_means.index[month_change]
+                # Ensure the first day is included
+                if tick_indices.empty or tick_indices[0] != 0:
+                    tick_indices = pd.Index([0]).union(tick_indices)
+
+                tick_vals = daily_means.loc[tick_indices, "date"].tolist()
+                tick_labels = daily_means.loc[tick_indices, "persian_month"].tolist()
+
                 fig_limits.update_layout(
                     title=f"میانگین روزانه {selected_equipment} با حدود کنترل",
-                    xaxis_title="تاریخ",
+                    xaxis_title="ماه",
                     yaxis_title="مقدار",
                     hovermode="x unified",
                     height=500,
+                    xaxis=dict(
+                        tickmode="array",
+                        tickvals=tick_vals,
+                        ticktext=tick_labels,
+                        tickangle=45,
+                    ),
                 )
                 yearly_tab.plotly_chart(fig_limits, use_container_width=True)
 
-                # Optionally show a table of all days with deviation
                 with yearly_tab.expander("نمایش جدول تمام روزها"):
                     yearly_tab.dataframe(
-                        daily_means.sort_values("deviation", ascending=False)
+                        daily_means[["date", "daily_mean", "deviation"]].sort_values(
+                            "deviation", ascending=False
+                        )
                     )
             else:
                 yearly_tab.warning(
