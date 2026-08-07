@@ -477,7 +477,7 @@ if month_dir.exists():
                     if selected_option is not None:
                         selected_row = all_daily.loc[selected_option]
                         selected_date = selected_row['Date']
-
+                        # TODO: Figure out what this does:)))
                         # Auto description matched from description2.csv for
                         # this date + equipment tag (آسیاب 1 / آسیاب 2 / کوره).
                         selected_des = get_auto_description(selected_date, selected_equipment)
@@ -512,12 +512,22 @@ if month_dir.exists():
                                     value=selected_description,
                                     key=f"description_{year}_{month_num}_{day_num}_{selected_equipment}"
                                 )
+                                if daily_tab.button("ذخیره توضیحات روز", key=f"save_description_{year}_{month_num}_{day_num}_{selected_equipment}"):
+                                    if 'description' not in day_data.columns:
+                                        day_data['description'] = ''
+                                        day_data['description'] = description_input
+                                        day_data.to_csv(day_file, index=False)
+                                        st.session_state.descriptions[
+                                            f"{selected_equipment}::{selected_date}"
+                                        ] = description_input
+                                        daily_tab.success("توضیحات ذخیره شد")
                             with col2:
                                 daily_tab.write(f"**UCL:** {UCL}")
                                 daily_tab.write(f"**LCL:** {LCL}")
                                 daily_tab.write(f"**وضعیت:** {'✅ در محدوده' if not selected_row['Outlier'] else '❌ خارج از محدوده'}")
 
-                            # Daily Plot (Scatter)
+                        
+                        # Daily Plot (Scatter)
                         def get_color(val):
                             return 'red' if is_outlier(val, UCL, LCL) else 'green'
                         
@@ -545,15 +555,7 @@ if month_dir.exists():
                             showlegend=False
                         )
                         daily_tab.plotly_chart(fig_daily, use_container_width=True, key="daily_chart")
-                        if daily_tab.button("ذخیره توضیحات روز", key=f"save_description_{year}_{month_num}_{day_num}_{selected_equipment}"):
-                            if 'description' not in day_data.columns:
-                                day_data['description'] = ''
-                            day_data['description'] = description_input
-                            day_data.to_csv(day_file, index=False)
-                            st.session_state.descriptions[
-                                f"{selected_equipment}::{selected_date}"
-                            ] = description_input
-                            daily_tab.success("توضیحات ذخیره شد")
+                       
                 else:
                     daily_tab.warning("داده‌ای برای این ماه وجود ندارد.")
 
@@ -656,7 +658,7 @@ df_ranking = df_ranking.sort_values('میانگین انحراف سالانه', 
 
 if not df_ranking.empty:
     most_faulty = df_ranking.iloc[0]
-    col1, col2 = st.columns(2)
+    col1, col2 = yearly_tab.columns(2)
     col2.metric("پرنقص‌ترین تجهیز", most_faulty['تجهیز'])
     col2.metric("با میانگین انحراف", most_faulty['میانگین انحراف سالانه'])
     col2.dataframe(df_ranking)
