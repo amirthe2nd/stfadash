@@ -22,3 +22,13 @@ pip install streamlit jalaali jdatetime pathlib plotly numpy pandas
 streamlit run app.py
 ```
 استفاده کنید.
+
+# اسکرینشات ها
+![Screenshot 1](./ss1.png)
+![Screenshot 2](./ss2.png)
+![Screenshot 3](./ss3.png)
+![Screenshot 4](./ss4.png)
+![Screenshot 5](./ss5.png)
+![Screenshot 6](./ss6.png)
+![Screenshot 7](./ss7.png)
+![Screenshot 8](./ss8.png)
