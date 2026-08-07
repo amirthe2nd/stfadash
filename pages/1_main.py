@@ -567,7 +567,7 @@ else:
 col1, col2 = yearly_tab.columns(2)
 col1.write("### پایش سالانه")
 col1.text(f"سال {year}")
-
+# ----- 1️⃣ Compute yearly data for the SELECTED equipment (for its own plot) -----
 monthly_results = []
 for m_num in range(1, 13):
     m_name = [name for name, num in month_mapping.items() if num == f"{m_num:02d}"]
@@ -587,18 +587,16 @@ for m_num in range(1, 13):
             'انحراف': None,
             'داده موجود': False
         })
-
 df_yearly = pd.DataFrame(monthly_results)
 df_yearly = df_yearly[df_yearly['داده موجود']]
-yearly_max = df_yearly.max()
-col2.write("### بیشترین انحراف در سال بر حسب تجهیز")
-col2.text(yearly_max['ماه'])
-col2.text(yearly_max['انحراف'])
 
+
+# ----- 2️⃣ Display selected equipment's yearly bar chart & metric -----
 if not df_yearly.empty:
     avg_fault = abs(df_yearly['انحراف'].mean())
-    yearly_tab.metric("میانگین انحراف سالانه", f"{avg_fault:.4f}" if avg_fault is not None else "N/A")
-
+    col1.metric("میانگین انحراف سالانه", f"{avg_fault:.4f}" if avg_fault is not None else "N/A")
+    col2.metric("تجهیز", selected_equipment)
+    
     df_yearly['abs_deviation'] = df_yearly['انحراف'].abs()
 
     fig_yearly = px.bar(
@@ -615,5 +613,54 @@ if not df_yearly.empty:
 else:
     yearly_tab.warning(f"داده‌ای برای سال {year} موجود نیست.")
 
+# ----- 3️⃣ Ranking of ALL equipment (most faulty) – displayed in col2 -----
+def compute_yearly_avg_fault(year, equipment, cl_csv, month_mapping):
+    """Return the average absolute fault for a given equipment over the year, or None if no data."""
+    monthly_results = []
+    for m_num in range(1, 13):
+        m_name = [name for name, num in month_mapping.items() if num == f"{m_num:02d}"]
+        m_name = m_name[0] if m_name else f"{m_num:02d}"
+        mean_val, fault, has_data = get_monthly_fault(year, f"{m_num:02d}", equipment, cl_csv)
+        if has_data and mean_val is not None:
+            monthly_results.append({
+                'ماه': m_name,
+                'میانگین ماهانه': mean_val,
+                'انحراف': fault if fault is not None else 0,
+                'داده موجود': True
+            })
+        else:
+            monthly_results.append({
+                'ماه': m_name,
+                'میانگین ماهانه': None,
+                'انحراف': None,
+                'داده موجود': False
+            })
+    df_yearly = pd.DataFrame(monthly_results)
+    df_yearly = df_yearly[df_yearly['داده موجود']]
+    if not df_yearly.empty:
+        return abs(df_yearly['انحراف'].mean())
+    return None
 
+# Get all equipment names
+equipment_names = cl_csv.iloc[:, 2].str.strip().tolist()
+
+# Compute average fault for each
+fault_dict = {}
+for equip in equipment_names:
+    avg = compute_yearly_avg_fault(year, equip, cl_csv, month_mapping)
+    if avg is not None:
+        fault_dict[equip] = avg
+
+df_ranking = pd.DataFrame(list(fault_dict.items()), columns=['تجهیز', 'میانگین انحراف سالانه'])
+df_ranking = df_ranking.sort_values('میانگین انحراف سالانه', ascending=False)
+
+if not df_ranking.empty:
+    most_faulty = df_ranking.iloc[0]
+    col1, col2 = st.columns(2)
+    col2.metric("پرنقص‌ترین تجهیز", most_faulty['تجهیز'])
+    col2.metric("با میانگین انحراف", most_faulty['میانگین انحراف سالانه'])
+    col2.dataframe(df_ranking)
+else:
+    col2.warning("هیچ داده‌ای برای هیچ تجهیزی موجود نیست.")
+    
 # -- description csv loading 
