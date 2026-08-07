@@ -5,10 +5,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from ui.month_tab import display_month_tab
+BASE_DIR = Path(__file__).parent
 from utils import (
     DATA_DIR,
     clean_measurements,
     get_auto_description,
+    get_day_description,
     get_monthly_fault,
     is_outlier,
     normalize_control_limits,
@@ -58,7 +60,7 @@ cl_csv = normalize_control_limits(cl_csv)
 if cl_csv.empty:
     st.error("فایل حدود کنترل معتبر نیست.")
     st.stop()
-equipment_names = cl_csv.iloc[:, 2].str.strip().tolist()
+equipment_names = cl_csv["Equipment"].drop_duplicates().str.strip().tolist()
 selected_equipment = st.sidebar.selectbox("نام تجهیز", equipment_names)
 
 # ---------- TABS ----------
@@ -77,7 +79,7 @@ with monthly_tab:
         if day_files:
             dfs = []
             for day_file in day_files:
-                day_df = pd.read_csv(day_file)
+                day_df = read_csv_with_fallback(day_file)
                 day_df.columns = day_df.columns.str.strip()
                 dfs.append(day_df)
             month_csv = pd.concat(dfs, ignore_index=True)
@@ -116,7 +118,11 @@ with daily_tab:
         if selected_option is not None:
             selected_row = all_daily.loc[selected_option]
             selected_date = selected_row["Date"]
-            selected_des = get_auto_description(selected_date, selected_equipment)
+            day_num = int(selected_date.split("-")[2])
+            manual_des = get_day_description(year, month_num, day_num)
+            selected_des = manual_des or get_auto_description(
+                selected_date, selected_equipment
+            )
 
             description_cache_key = f"{selected_equipment}::{selected_date}"
             if "descriptions" not in st.session_state:
@@ -126,11 +132,10 @@ with daily_tab:
             )
             daily_tab.info(selected_description or "توضیحی برای این روز ثبت نشده است.")
 
-            day_num = int(selected_date.split("-")[2])
             day_file = DATA_DIR / str(year) / month_num / f"{day_num:02d}.csv"
 
             if day_file.exists():
-                day_data = pd.read_csv(day_file)
+                day_data = read_csv_with_fallback(day_file)
                 day_data.columns = day_data.columns.str.strip()
                 equipment_values = (
                     clean_measurements(day_data[selected_equipment], UCL, LCL)
@@ -309,7 +314,7 @@ with yearly_tab:
             return abs(df_yearly["انحراف"].mean())
         return None
 
-    equipment_names = cl_csv.iloc[:, 2].str.strip().tolist()
+    equipment_names = cl_csv["Equipment"].drop_duplicates().str.strip().tolist()
     fault_dict = {}
     for equip in equipment_names:
         avg = compute_yearly_avg_fault(year, equip, cl_csv, month_mapping)

@@ -7,7 +7,9 @@ from utils import (
     calculate_difference,
     clean_measurements,
     get_auto_description,
+    get_day_description,
     is_outlier,
+    read_csv_with_fallback,
 )
 
 
@@ -30,14 +32,14 @@ def display_month_tab(year, month, month_num, selected_equipment, cl_csv, month_
         )
         st.stop()
 
-    equipment_row = cl_csv[cl_csv.iloc[:, 2] == selected_equipment]
+    equipment_row = cl_csv[cl_csv["Equipment"] == selected_equipment]
     if equipment_row.empty:
         st.warning(f"هیچ حدی برای {selected_equipment} یافت نشد.")
         return None, None, None
 
     # Static limits from CSV
-    UCL = float(equipment_row.iloc[0, 1])
-    LCL = float(equipment_row.iloc[0, 0])
+    LCL = float(equipment_row.iloc[0]["LCL"])
+    UCL = float(equipment_row.iloc[0]["UCL"])
     month_csv[selected_equipment] = clean_measurements(
         month_csv[selected_equipment], UCL, LCL
     )
@@ -191,17 +193,8 @@ def display_month_tab(year, month, month_num, selected_equipment, cl_csv, month_
         cache_key = _description_cache_key(date_str, selected_equipment)
         if cache_key in st.session_state.descriptions:
             continue
-        manual_desc = ""
         day_num = int(date_str.split("-")[2])
-        day_file = DATA_DIR / str(year) / month_num / f"{day_num:02d}.csv"
-        if day_file.exists():
-            day_data = pd.read_csv(day_file)
-            day_data.columns = day_data.columns.str.strip()
-            if "description" in day_data.columns:
-                desc = day_data["description"].dropna().astype(str)
-                desc = desc[desc.str.strip() != ""]
-                if not desc.empty:
-                    manual_desc = desc.iloc[0]
+        manual_desc = get_day_description(year, month_num, day_num)
         st.session_state.descriptions[cache_key] = manual_desc or get_auto_description(
             date_str, selected_equipment
         )
@@ -232,7 +225,7 @@ def display_month_tab(year, month, month_num, selected_equipment, cl_csv, month_
             day_num = int(date_str.split("-")[2])
             day_file = DATA_DIR / str(year) / month_num / f"{day_num:02d}.csv"
             if day_file.exists():
-                day_data = pd.read_csv(day_file)
+                day_data = read_csv_with_fallback(day_file)
                 day_data.columns = day_data.columns.str.strip()
                 if "description" not in day_data.columns:
                     day_data["description"] = ""

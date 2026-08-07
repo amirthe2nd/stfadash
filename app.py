@@ -1,6 +1,8 @@
 import streamlit as st
 from pathlib import Path
+from utils import DATA_DIR
 
+BASE_DIR = Path(__file__).parent
 
 st.logo("logo.jpeg", size="large")
 
@@ -26,9 +28,8 @@ upload_page = st.Page(
 
 
 # Do not open the dashboard until both of its required inputs exist.
-data_dir = Path("data")
-has_data = any(data_dir.glob("[0-9]*/*/*.csv"))
-has_control_limits = (data_dir / "cl_data.csv").is_file()
+has_data = any(DATA_DIR.glob("[0-9]*/*/*.csv"))
+has_control_limits = (DATA_DIR / "cl_data.csv").is_file()
 
 if has_data and has_control_limits:
     menu = st.navigation({"Menu": [main_page, upload_page]})
