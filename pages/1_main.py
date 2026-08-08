@@ -138,6 +138,44 @@ with daily_tab:
             )
             daily_tab.info(selected_description or "توضیحی برای این روز ثبت نشده است.")
 
+            # ---------- NEW: Load & display descriptions from description.csv ----------
+            desc_file = DATA_DIR / "description.csv"
+            if desc_file.exists():
+                try:
+                    daily_tab.write("desc_file exist")
+                    desc_df = read_csv_with_fallback(desc_file)
+                    # Ensure columns are stripped
+                    desc_df.columns = desc_df.columns.str.strip()
+                    # First column is the date (Persian format)
+                    date_col = desc_df.columns[0]
+                    # Convert selected_date (e.g., "1404-06-01") to Persian format (1404/06/01)
+                    persian_date = selected_date.replace("-", "/")
+                    # Find row for this date
+                    row = desc_df[desc_df[date_col] == persian_date]
+                    if not row.empty:
+                        # Extract all non‑empty, non‑slash, non‑zero, non‑time values from the row
+                        reasons = []
+                        for col in row.columns[1:]:  # skip date column
+                            val = row.iloc[0][col]
+                            # Check if value is meaningful
+                            if pd.notna(val) and str(val).strip():
+                                val_str = str(val).strip()
+                                # Ignore slashes, zeros, and time-like values (e.g., "0:00")
+                                if val_str not in [
+                                    "/",
+                                    "0",
+                                    "0:00",
+                                ] and not val_str.endswith(":00"):
+                                    reasons.append(val_str)
+                        if reasons:
+                            daily_tab.info(
+                                "📋 **دلایل ثبت‌شده در description.csv:**\n"
+                                + "\n".join(reasons)
+                            )
+                except Exception as e:
+                    daily_tab.warning(f"خطا در خواندن description.csv: {e}")
+            # ---------- END NEW ----------
+
             day_file = DATA_DIR / str(year) / month_num / f"{day_num:02d}.csv"
 
             if day_file.exists():
@@ -224,8 +262,6 @@ with daily_tab:
         daily_tab.warning(
             "داده‌ای برای این ماه وجود ندارد. لطفاً ابتدا یک ماه معتبر با داده انتخاب کنید."
         )
-
-# ========== YEARLY TAB ==========
 # ========== YEARLY TAB ==========
 with yearly_tab:
     col1, col2 = yearly_tab.columns(2)
